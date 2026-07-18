@@ -11,6 +11,7 @@ import MessageInput from "./MessageInput"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Loader2, Lock } from "lucide-react"
+import { toast } from "sonner"
 import type { Profile, Message } from "@/lib/types"
 
 interface ConversationViewProps {
@@ -76,6 +77,14 @@ export default function ConversationView({
         const password = sessionStorage.getItem("sumr_master_password")
         if (password) {
           await e2ee.initialize(password)
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("encrypted_private_key, public_key")
+            .eq("id", user.id)
+            .single() as any
+          if (profile?.encrypted_private_key && profile?.public_key) {
+            await e2ee.loadKeys(profile.encrypted_private_key, profile.public_key)
+          }
           key = await e2ee.getConversationKey(
             myParticipation.encrypted_symmetric_key,
           )
@@ -188,11 +197,17 @@ export default function ConversationView({
   const handleSend = useCallback(
     async (content: string) => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !conversationKey) return
+      if (!user || !conversationKey) {
+        toast.error("Unlock the conversation first (enter your master password)")
+        return
+      }
 
       if (!e2ee.isInitialized()) {
         const password = sessionStorage.getItem("sumr_master_password")
-        if (!password) return
+        if (!password) {
+          toast.error("Session expired. Please re-login.")
+          return
+        }
         await e2ee.initialize(password)
       }
 

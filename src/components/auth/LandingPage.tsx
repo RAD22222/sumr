@@ -43,29 +43,29 @@ export default function LandingPage() {
       return
     }
 
+    sessionStorage.setItem("sumr_master_password", password)
     router.push("/chats")
     router.refresh()
   }
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!inviteCode) {
-      toast.error("Invite code is required")
+    if (!displayName.trim()) {
+      toast.error("Display name is required")
       return
     }
     setLoading(true)
 
     const supabase = getSupabaseClient()
 
-    const { data: invite, error: inviteError } = await supabase
-      .from("invites")
-      .select("id, status, sender_id")
-      .eq("code", inviteCode)
-      .eq("recipient_email", email)
-      .single()
+    const { data: check } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("display_name", displayName.trim())
+      .maybeSingle()
 
-    if (inviteError || !invite || invite.status !== "pending") {
-      toast.error("Invalid or used invite code")
+    if (check) {
+      toast.error("Display name already taken")
       setLoading(false)
       return
     }
@@ -75,7 +75,7 @@ export default function LandingPage() {
       password,
       options: {
         data: {
-          display_name: displayName,
+          display_name: displayName.trim(),
         },
       },
     })
@@ -90,23 +90,18 @@ export default function LandingPage() {
       await e2ee.initialize(password)
       const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
 
-      await supabase.from("profiles").insert({
+      await supabase.from("profiles").upsert({
         id: data.user.id,
         email,
-        display_name: displayName || email.split("@")[0],
+        display_name: displayName.trim(),
         public_key: publicKey,
         encrypted_private_key: encryptedPrivateKey,
       })
 
-      await supabase
-        .from("invites")
-        .update({ status: "accepted", accepted_at: new Date().toISOString() })
-        .eq("id", invite.id)
-
       sessionStorage.setItem("sumr_master_password", password)
     }
 
-    toast.success("Account created! Check your email to verify.")
+    toast.success("Account created!")
     setShowSignup(false)
     setLoading(false)
   }
@@ -194,18 +189,9 @@ export default function LandingPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Create account</DialogTitle>
-            <DialogDescription>
-              You need an invite code from a friend to join
-            </DialogDescription>
+            <DialogDescription>Anyone can join — no code needed</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSignup} className="space-y-4">
-            <Input
-              type="text"
-              placeholder="Invite code"
-              value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
-              required
-            />
             <Input
               type="text"
               placeholder="Display name"

@@ -31,6 +31,7 @@ export default function LoginForm() {
       return
     }
 
+    sessionStorage.setItem("sumr_master_password", password)
     router.push("/chats")
     router.refresh()
   }
