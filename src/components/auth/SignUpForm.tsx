@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { e2ee } from "@/lib/crypto/encryption"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,11 @@ export default function SignUpForm() {
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
+  // Pre-warm: trigger Vercel challenge on page load so form submit works
+  useEffect(() => {
+    fetch("/api/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {})
+  }, [])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!inviteCode) {
@@ -25,42 +30,57 @@ export default function SignUpForm() {
     }
     setLoading(true)
 
-    await e2ee.initialize(password)
-    const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
+    try {
+      await e2ee.initialize(password)
+      const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
 
-    const res = await fetch("/api/auth/signup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email,
-        password,
-        displayName: displayName || email.split("@")[0],
-        inviteCode,
-        publicKey,
-        encryptedPrivateKey,
-      }),
-    })
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({
+          email,
+          password,
+          displayName: displayName || email.split("@")[0],
+          inviteCode,
+          publicKey,
+          encryptedPrivateKey,
+        }),
+      })
 
-    const data = await res.json()
+      if (!res.ok) {
+        const text = await res.text()
+        let data
+        try { data = JSON.parse(text) } catch { data = {} }
+        toast.error(data.error || "Signup failed (check console)")
+        setLoading(false)
+        return
+      }
 
-    if (data.valid === false) {
-      toast.error("Invalid or used invite code")
-      setLoading(false)
-      return
+      const data = await res.json()
+
+      if (data.valid === false) {
+        toast.error("Invalid or used invite code")
+        setLoading(false)
+        return
+      }
+
+      if (data.error) {
+        toast.error(data.error)
+        setLoading(false)
+        return
+      }
+
+      if (data.success) {
+        sessionStorage.setItem("sumr_master_password", password)
+      }
+
+      toast.success("Account created! Check your email to verify.")
+      router.push("/")
+    } catch {
+      toast.error("Signup failed. Try refreshing the page.")
     }
 
-    if (data.error) {
-      toast.error(data.error)
-      setLoading(false)
-      return
-    }
-
-    if (data.success) {
-      sessionStorage.setItem("sumr_master_password", password)
-    }
-
-    toast.success("Account created! Check your email to verify.")
-    router.push("/")
     setLoading(false)
   }
 
