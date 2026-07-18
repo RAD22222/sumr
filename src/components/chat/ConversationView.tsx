@@ -76,7 +76,10 @@ export default function ConversationView({
   }
 
   async function enrichMessages(msgs: Message[]): Promise<Message[]> {
-    const replyIds = msgs.filter((m) => m.reply_to_id).map((m) => m.reply_to_id!)
+    const replyIds = msgs
+      .map((m) => m.nonce?.startsWith("reply:") ? m.nonce.slice(6) : null)
+      .filter(Boolean) as string[]
+
     if (replyIds.length === 0) return msgs.map((m) => ({ ...m, decrypted_content: m.encrypted_content }))
 
     const { data: replyMsgs } = await supabase
@@ -101,11 +104,14 @@ export default function ConversationView({
       }
     }
 
-    return msgs.map((m) => ({
-      ...m,
-      decrypted_content: m.encrypted_content,
-      replyTo: m.reply_to_id ? replyMap.get(m.reply_to_id) || undefined : undefined,
-    }))
+    return msgs.map((m) => {
+      const replyId = m.nonce?.startsWith("reply:") ? m.nonce.slice(6) : null
+      return {
+        ...m,
+        decrypted_content: m.encrypted_content,
+        replyTo: replyId ? replyMap.get(replyId) || undefined : undefined,
+      }
+    })
   }
 
   useEffect(() => {
@@ -153,11 +159,7 @@ export default function ConversationView({
         conversation_id: conversationId,
         sender_id: user.id,
         encrypted_content: content,
-        nonce: "",
-      }
-
-      if (replyTarget) {
-        msg.reply_to_id = replyTarget.id
+        nonce: replyTarget ? `reply:${replyTarget.id}` : "",
       }
 
       await supabase.from("messages").insert(msg)
