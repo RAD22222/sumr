@@ -18,24 +18,22 @@ export default function InvitePage() {
     e.preventDefault()
     setLoading(true)
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
       toast.error("Not authenticated")
       setLoading(false)
       return
     }
 
-    const code = crypto.randomUUID().slice(0, 8).toUpperCase()
-
-    const { error } = await supabase.from("invites").insert({
-      sender_id: user.id,
-      recipient_email: email,
-      code,
-      status: "pending",
+    const res = await fetch("/api/invite/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
     })
 
-    if (error) {
-      toast.error(error.message)
+    const data = await res.json()
+    if (!res.ok) {
+      toast.error(data.error || "Failed to send invite")
       setLoading(false)
       return
     }

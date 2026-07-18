@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       const senderName = sender?.display_name || sender?.email || "A friend"
 
       await resend.emails.send({
-        from: "Sumr <invites@sumr.app>",
+        from: "Sumr <onboarding@resend.dev>",
         to: email,
         subject: `${senderName} invited you to Sumr`,
         html: `
