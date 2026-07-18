@@ -36,6 +36,7 @@ export default function SignUpForm() {
     const verify = await verifyRes.json()
 
     if (!verify.valid) {
+      console.error("Verify API response:", verify)
       toast.error("Invalid or used invite code")
       setLoading(false)
       return
