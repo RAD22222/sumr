@@ -63,18 +63,22 @@ export default function SignUpForm() {
       await e2ee.initialize(password)
       const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
 
-      await supabase.from("profiles").insert({
-        id: data.user.id,
-        email,
-        display_name: displayName || email.split("@")[0],
-        public_key: publicKey,
-        encrypted_private_key: encryptedPrivateKey,
+      const completeRes = await fetch("/api/auth/complete-signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          publicKey,
+          encryptedPrivateKey,
+          displayName: displayName || email.split("@")[0],
+          inviteId,
+        }),
       })
 
-      await supabase
-        .from("invites")
-        .update({ status: "accepted", accepted_at: new Date().toISOString() })
-        .eq("id", inviteId)
+      if (!completeRes.ok) {
+        const err = await completeRes.json()
+        console.error("Profile creation failed:", err)
+        toast.warning("Account created, but profile setup may need re-login")
+      }
 
       sessionStorage.setItem("sumr_master_password", password)
     }
