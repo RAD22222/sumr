@@ -33,11 +33,18 @@ export default function AppShell({ children, user, profile }: AppShellProps) {
   const supabase = getSupabaseClient()
 
   const isChatActive = pathname.startsWith("/chats/")
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    addEventListener("resize", check)
+    return () => removeEventListener("resize", check)
+  }, [])
 
   useEffect(() => {
     if (isMobile) {
-      setSidebarOpen(!isChatActive)
+      setSidebarOpen(false)
     } else {
       setSidebarOpen(true)
     }
@@ -85,7 +92,7 @@ export default function AppShell({ children, user, profile }: AppShellProps) {
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => router.push("/invite")}
+              onClick={() => router.push("/contacts")}
             >
               <Plus className="h-5 w-5" />
             </Button>
@@ -148,13 +155,7 @@ export default function AppShell({ children, user, profile }: AppShellProps) {
       </aside>
 
       {/* Main content */}
-      <main
-        className={cn(
-          "flex-1 flex flex-col min-w-0",
-          isMobile && isChatActive ? "block" : isMobile && !isChatActive ? "hidden" : "block",
-        )}
-      >
-        {/* Mobile header when no chat active */}
+      <main className="flex-1 flex flex-col min-w-0">
         {isMobile && !isChatActive && (
           <div className="flex items-center gap-3 px-4 py-3 border-b bg-background">
             <Button
