@@ -28,18 +28,20 @@ export default function SignUpForm() {
 
     const supabase = getSupabaseClient()
 
-    const { data: invite, error: inviteError } = await supabase
-      .from("invites")
-      .select("id, status, sender_id")
-      .eq("code", inviteCode)
-      .eq("recipient_email", email)
-      .single()
+    const verifyRes = await fetch("/api/invite/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: inviteCode, email }),
+    })
+    const verify = await verifyRes.json()
 
-    if (inviteError || !invite || invite.status !== "pending") {
+    if (!verify.valid) {
       toast.error("Invalid or used invite code")
       setLoading(false)
       return
     }
+
+    const inviteId = verify.inviteId
 
     const { data, error } = await supabase.auth.signUp({
       email,
@@ -72,7 +74,7 @@ export default function SignUpForm() {
       await supabase
         .from("invites")
         .update({ status: "accepted", accepted_at: new Date().toISOString() })
-        .eq("id", invite.id)
+        .eq("id", inviteId)
 
       sessionStorage.setItem("sumr_master_password", password)
     }
