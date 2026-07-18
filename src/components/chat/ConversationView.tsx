@@ -2,16 +2,10 @@
 
 import { useEffect, useState, useRef, useCallback } from "react"
 import { getSupabaseClient } from "@/lib/supabase/client"
-import { useChatStore } from "@/store/chat-store"
-import { e2ee } from "@/lib/crypto/encryption"
-import { decryptKeyWithMasterKey, base64ToArrayBuffer } from "@/lib/crypto/keyDerivation"
 import ConversationHeader from "./ConversationHeader"
 import MessageBubble from "./MessageBubble"
 import MessageInput from "./MessageInput"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Loader2, Lock } from "lucide-react"
-import { toast } from "sonner"
+import { Loader2 } from "lucide-react"
 import type { Profile, Message } from "@/lib/types"
 
 interface ConversationViewProps {
@@ -24,19 +18,11 @@ export default function ConversationView({
   const [otherUser, setOtherUser] = useState<Profile | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
-  const [conversationKey, setConversationKey] = useState<string | null>(null)
-  const [e2eeReady, setE2eeReady] = useState(false)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const scrollAnchorRef = useRef<HTMLDivElement>(null)
   const shouldAutoScroll = useRef(true)
 
   const supabase = getSupabaseClient()
-  const { setActiveConversation, setConversationKey: storeKey } = useChatStore()
-
-  useEffect(() => {
-    setActiveConversation(conversationId)
-    return () => setActiveConversation(null)
-  }, [conversationId, setActiveConversation])
 
   useEffect(() => {
     initConversation()
@@ -67,39 +53,7 @@ export default function ConversationView({
         setOtherUser(profile)
       }
 
-      const myParticipation = participants.find(
-        (p: any) => p.user_id === user.id,
-      ) as any
-
-      let key = useChatStore.getState().conversationKeys[conversationId]
-
-      if (!key && myParticipation?.encrypted_symmetric_key) {
-        const password = sessionStorage.getItem("sumr_master_password")
-        if (password) {
-          await e2ee.initialize(password)
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("encrypted_private_key, public_key")
-            .eq("id", user.id)
-            .single() as any
-          if (profile?.encrypted_private_key && profile?.public_key) {
-            await e2ee.loadKeys(profile.encrypted_private_key, profile.public_key)
-          }
-          key = await e2ee.getConversationKey(
-            myParticipation.encrypted_symmetric_key,
-          )
-          storeKey(conversationId, key)
-          setConversationKey(key)
-          setE2eeReady(true)
-        }
-      } else if (key) {
-        setConversationKey(key)
-        setE2eeReady(true)
-      }
-
-      if (key) {
-        await loadMessages(key)
-      }
+      await loadMessages()
     } catch (err) {
       console.error("Init error:", err)
     } finally {
@@ -107,7 +61,7 @@ export default function ConversationView({
     }
   }
 
-  async function loadMessages(key: string) {
+  async function loadMessages() {
     const { data } = await supabase
       .from("messages")
       .select("*")
@@ -116,33 +70,15 @@ export default function ConversationView({
 
     if (!data) return
 
-    if (key && e2ee.isInitialized()) {
-      const decrypted = await Promise.all(
-        data.map(async (msg: any) => {
-          try {
-            const content = await e2ee.decryptMessage(
-              key,
-              msg.encrypted_content,
-              msg.nonce,
-            )
-            return { ...msg, decrypted_content: content } as Message
-          } catch {
-            return {
-              ...msg,
-              decrypted_content: "[Decryption failed]",
-            } as Message
-          }
-        }),
-      )
-      setMessages(decrypted)
-    } else {
-      setMessages(data as Message[])
-    }
+    setMessages(
+      data.map((msg: any) => ({
+        ...msg,
+        decrypted_content: msg.encrypted_content,
+      })),
+    )
   }
 
   useEffect(() => {
-    if (!e2eeReady || !conversationKey) return
-
     const channel = supabase
       .channel(`messages:${conversationId}`)
       .on(
@@ -153,26 +89,12 @@ export default function ConversationView({
           table: "messages",
           filter: `conversation_id=eq.${conversationId}`,
         },
-        async (payload: any) => {
+        (payload: any) => {
           const newMsg = payload.new as Message
-          if (conversationKey && e2ee.isInitialized()) {
-            try {
-              const content = await e2ee.decryptMessage(
-                conversationKey,
-                newMsg.encrypted_content,
-                newMsg.nonce,
-              )
-              setMessages((prev) => [
-                ...prev,
-                { ...newMsg, decrypted_content: content },
-              ])
-            } catch {
-              setMessages((prev) => [
-                ...prev,
-                { ...newMsg, decrypted_content: "[Decryption failed]" },
-              ])
-            }
-          }
+          setMessages((prev) => [
+            ...prev,
+            { ...newMsg, decrypted_content: newMsg.encrypted_content },
+          ])
         },
       )
       .subscribe()
@@ -180,7 +102,7 @@ export default function ConversationView({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [e2eeReady, conversationKey, conversationId, supabase])
+  }, [conversationId, supabase])
 
   const handleScroll = () => {
     const el = scrollAnchorRef.current?.parentElement
@@ -197,158 +119,22 @@ export default function ConversationView({
   const handleSend = useCallback(
     async (content: string) => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user || !conversationKey) {
-        toast.error("Unlock the conversation first (enter your master password)")
-        return
-      }
-
-      if (!e2ee.isInitialized()) {
-        const password = sessionStorage.getItem("sumr_master_password")
-        if (!password) {
-          toast.error("Session expired. Please re-login.")
-          return
-        }
-        await e2ee.initialize(password)
-      }
-
-      const encrypted = await e2ee.encryptMessage(conversationKey, content)
+      if (!user) return
 
       await supabase.from("messages").insert({
         conversation_id: conversationId,
         sender_id: user.id,
-        encrypted_content: encrypted.encrypted_content,
-        nonce: encrypted.nonce,
+        encrypted_content: content,
+        nonce: "",
       })
     },
-    [conversationId, conversationKey, supabase],
+    [conversationId, supabase],
   )
-
-  const [passwordInput, setPasswordInput] = useState("")
-
-  const handleUnlock = async () => {
-    try {
-      await e2ee.initialize(passwordInput)
-      sessionStorage.setItem("sumr_master_password", passwordInput)
-
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("encrypted_private_key, public_key")
-        .eq("id", user.id)
-        .single() as any
-
-      if (profile?.encrypted_private_key && profile?.public_key) {
-        await e2ee.loadKeys(
-          profile.encrypted_private_key,
-          profile.public_key,
-        )
-      }
-
-      const { data: participants } = await supabase
-        .from("conversation_participants")
-        .select("*")
-        .eq("conversation_id", conversationId)
-
-      const myParticipation = (participants as any[])?.find(
-        (p: any) => p.user_id === user.id,
-      )
-
-      const otherParticipation = (participants as any[])?.find(
-        (p: any) => p.user_id !== user.id,
-      )
-
-      if (myParticipation?.encrypted_symmetric_key) {
-        const key = await e2ee.getConversationKey(
-          myParticipation.encrypted_symmetric_key,
-        )
-        setConversationKey(key)
-        storeKey(conversationId, key)
-      } else if (otherParticipation?.encrypted_symmetric_key) {
-        const key = await e2ee.decryptConversationKeyForOther(
-          otherParticipation.encrypted_symmetric_key,
-        )
-        setConversationKey(key)
-        storeKey(conversationId, key)
-      } else if (profile?.public_key) {
-        // No key exists yet — create one and share with other user
-        const { data: otherProfile } = await supabase
-          .from("profiles")
-          .select("public_key")
-          .eq("id", otherParticipation?.user_id)
-          .single() as any
-
-        if (otherProfile?.public_key) {
-          const convKeys = await e2ee.createConversationKey(otherProfile.public_key)
-          await supabase
-            .from("conversation_participants")
-            .update({ encrypted_symmetric_key: convKeys.encryptedForSelf })
-            .eq("conversation_id", conversationId)
-            .eq("user_id", user.id)
-
-          await supabase
-            .from("conversation_participants")
-            .update({ encrypted_symmetric_key: convKeys.encryptedForOther })
-            .eq("conversation_id", conversationId)
-            .eq("user_id", otherParticipation.user_id)
-
-          setConversationKey(convKeys.raw)
-          storeKey(conversationId, convKeys.raw)
-        }
-      }
-
-      setE2eeReady(true)
-      setLoading(true)
-
-      const storedKey = useChatStore.getState().conversationKeys[conversationId]
-      if (storedKey) {
-        await loadMessages(storedKey)
-      }
-      setLoading(false)
-    } catch {
-      setPasswordInput("")
-    }
-  }
 
   if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    )
-  }
-
-  if (!e2eeReady) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center p-8 bg-muted/20">
-        <div className="max-w-sm w-full space-y-6 text-center">
-          <div className="rounded-full bg-primary/10 p-4 mx-auto w-fit">
-            <Lock className="h-8 w-8 text-primary" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">Unlock conversation</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Enter your master password to decrypt this conversation
-            </p>
-          </div>
-          <div className="space-y-3">
-            <Input
-              type="password"
-              placeholder="Master password"
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
-            />
-            <Button
-              onClick={handleUnlock}
-              className="w-full"
-              disabled={!passwordInput}
-            >
-              Unlock
-            </Button>
-          </div>
-        </div>
       </div>
     )
   }
@@ -381,7 +167,7 @@ export default function ConversationView({
           {messages.map((msg) => (
             <MessageBubble
               key={msg.id}
-              content={msg.decrypted_content || "[Encrypted]"}
+              content={msg.decrypted_content || ""}
               isOwn={msg.sender_id === currentUserId}
               timestamp={msg.created_at}
               senderName={
