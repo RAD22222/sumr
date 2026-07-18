@@ -40,13 +40,17 @@ export async function signupWithInvite(data: {
   const userId = authData.user.id
 
   if (data.publicKey && data.encryptedPrivateKey) {
-    await admin.from("profiles").insert({
-      id: userId,
-      email: data.email,
-      display_name: data.displayName,
-      public_key: data.publicKey,
-      encrypted_private_key: data.encryptedPrivateKey,
-    }).catch(e => console.error("Profile error:", e))
+    try {
+      await admin.from("profiles").insert({
+        id: userId,
+        email: data.email,
+        display_name: data.displayName,
+        public_key: data.publicKey,
+        encrypted_private_key: data.encryptedPrivateKey,
+      })
+    } catch (e) {
+      console.error("Profile error:", e)
+    }
   }
 
   await admin
