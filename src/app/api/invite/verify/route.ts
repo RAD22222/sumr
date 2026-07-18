@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     const { data, error } = await adminClient
       .from("invites")
       .select("id, status")
-      .eq("code", code)
+      .eq("code", code.toUpperCase())
       .single()
 
     if (error || !data || data.status !== "pending") {

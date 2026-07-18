@@ -101,8 +101,9 @@ export default function SignUpForm() {
           type="text"
           placeholder="Invite code"
           value={inviteCode}
-          onChange={(e) => setInviteCode(e.target.value)}
+          onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
           required
+          className="uppercase tracking-widest"
         />
         <Input
           type="text"
