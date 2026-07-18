@@ -2,7 +2,6 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { getSupabaseClient } from "@/lib/supabase/client"
 import { e2ee } from "@/lib/crypto/encryption"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -26,61 +25,37 @@ export default function SignUpForm() {
     }
     setLoading(true)
 
-    const supabase = getSupabaseClient()
+    await e2ee.initialize(password)
+    const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
 
-    const verifyRes = await fetch("/api/invite/verify", {
+    const res = await fetch("/api/auth/signup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: inviteCode }),
+      body: JSON.stringify({
+        email,
+        password,
+        displayName: displayName || email.split("@")[0],
+        inviteCode,
+        publicKey,
+        encryptedPrivateKey,
+      }),
     })
-    const verify = await verifyRes.json()
 
-    if (!verify.valid) {
-      console.error("Verify API response:", verify)
+    const data = await res.json()
+
+    if (data.valid === false) {
       toast.error("Invalid or used invite code")
       setLoading(false)
       return
     }
 
-    const inviteId = verify.inviteId
-
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          display_name: displayName,
-        },
-      },
-    })
-
-    if (error) {
-      toast.error(error.message)
+    if (data.error) {
+      toast.error(data.error)
       setLoading(false)
       return
     }
 
-    if (data.user) {
-      await e2ee.initialize(password)
-      const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
-
-      const completeRes = await fetch("/api/auth/complete-signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          publicKey,
-          encryptedPrivateKey,
-          displayName: displayName || email.split("@")[0],
-          inviteId,
-        }),
-      })
-
-      if (!completeRes.ok) {
-        const err = await completeRes.json()
-        console.error("Profile creation failed:", err)
-        toast.warning("Account created, but profile setup may need re-login")
-      }
-
+    if (data.success) {
       sessionStorage.setItem("sumr_master_password", password)
     }
 
