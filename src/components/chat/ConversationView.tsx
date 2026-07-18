@@ -255,22 +255,46 @@ export default function ConversationView({
         (p: any) => p.user_id === user.id,
       )
 
+      const otherParticipation = (participants as any[])?.find(
+        (p: any) => p.user_id !== user.id,
+      )
+
       if (myParticipation?.encrypted_symmetric_key) {
         const key = await e2ee.getConversationKey(
           myParticipation.encrypted_symmetric_key,
         )
         setConversationKey(key)
         storeKey(conversationId, key)
-      } else {
-        const otherParticipation = (participants as any[])?.find(
-          (p: any) => p.user_id !== user.id,
+      } else if (otherParticipation?.encrypted_symmetric_key) {
+        const key = await e2ee.decryptConversationKeyForOther(
+          otherParticipation.encrypted_symmetric_key,
         )
-        if (otherParticipation?.encrypted_symmetric_key) {
-          const key = await e2ee.decryptConversationKeyForOther(
-            otherParticipation.encrypted_symmetric_key,
-          )
-          setConversationKey(key)
-          storeKey(conversationId, key)
+        setConversationKey(key)
+        storeKey(conversationId, key)
+      } else if (profile?.public_key) {
+        // No key exists yet — create one and share with other user
+        const { data: otherProfile } = await supabase
+          .from("profiles")
+          .select("public_key")
+          .eq("id", otherParticipation?.user_id)
+          .single() as any
+
+        if (otherProfile?.public_key) {
+          const convKeys = await e2ee.createConversationKey(otherProfile.public_key)
+          await supabase
+            .from("conversation_participants")
+            .update({ encrypted_symmetric_key: convKeys.encryptedForSelf })
+            .eq("conversation_id", conversationId)
+            .eq("user_id", user.id)
+
+          await supabase
+            .from("conversation_participants")
+            .update({ encrypted_symmetric_key: convKeys.encryptedForOther })
+            .eq("conversation_id", conversationId)
+            .eq("user_id", otherParticipation.user_id)
+
+          setConversationKey(convKeys.raw)
+          storeKey(conversationId, convKeys.raw)
         }
       }
 
