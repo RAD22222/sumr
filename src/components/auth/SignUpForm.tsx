@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { e2ee } from "@/lib/crypto/encryption"
 import { Button } from "@/components/ui/button"
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
 import Link from "next/link"
+import { signupWithInvite } from "@/app/actions/signup"
 
 export default function SignUpForm() {
   const [email, setEmail] = useState("")
@@ -16,11 +17,6 @@ export default function SignUpForm() {
   const [inviteCode, setInviteCode] = useState("")
   const [loading, setLoading] = useState(false)
   const router = useRouter()
-
-  // Pre-warm: trigger Vercel challenge on page load so form submit works
-  useEffect(() => {
-    fetch("/api/auth/signup", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {})
-  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -34,44 +30,22 @@ export default function SignUpForm() {
       await e2ee.initialize(password)
       const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
 
-      const res = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify({
-          email,
-          password,
-          displayName: displayName || email.split("@")[0],
-          inviteCode,
-          publicKey,
-          encryptedPrivateKey,
-        }),
+      const result = await signupWithInvite({
+        email,
+        password,
+        displayName: displayName || email.split("@")[0],
+        inviteCode,
+        publicKey,
+        encryptedPrivateKey,
       })
 
-      if (!res.ok) {
-        const text = await res.text()
-        let data
-        try { data = JSON.parse(text) } catch { data = {} }
-        toast.error(data.error || "Signup failed (check console)")
+      if (result.error) {
+        toast.error(result.error)
         setLoading(false)
         return
       }
 
-      const data = await res.json()
-
-      if (data.valid === false) {
-        toast.error("Invalid or used invite code")
-        setLoading(false)
-        return
-      }
-
-      if (data.error) {
-        toast.error(data.error)
-        setLoading(false)
-        return
-      }
-
-      if (data.success) {
+      if (result.success) {
         sessionStorage.setItem("sumr_master_password", password)
       }
 
