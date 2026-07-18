@@ -167,7 +167,7 @@ export default function ChatListSidebar() {
                 </div>
                 <p className="text-xs text-muted-foreground truncate mt-0.5">
                   {conv.last_message
-                    ? "Encrypted message"
+                    ? conv.last_message.encrypted_content
                     : "No messages yet"}
                 </p>
               </div>

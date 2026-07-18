@@ -6,7 +6,7 @@ import ConversationHeader from "./ConversationHeader"
 import MessageBubble from "./MessageBubble"
 import MessageInput from "./MessageInput"
 import { Loader2 } from "lucide-react"
-import type { Profile, Message } from "@/lib/types"
+import type { Profile, Message, ReplyTo } from "@/lib/types"
 
 interface ConversationViewProps {
   conversationId: string
@@ -19,6 +19,7 @@ export default function ConversationView({
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  const [replyTarget, setReplyTarget] = useState<ReplyTo | null>(null)
   const scrollAnchorRef = useRef<HTMLDivElement>(null)
   const shouldAutoScroll = useRef(true)
 
@@ -70,12 +71,41 @@ export default function ConversationView({
 
     if (!data) return
 
-    setMessages(
-      data.map((msg: any) => ({
-        ...msg,
-        decrypted_content: msg.encrypted_content,
-      })),
-    )
+    const enriched = await enrichMessages(data as Message[])
+    setMessages(enriched)
+  }
+
+  async function enrichMessages(msgs: Message[]): Promise<Message[]> {
+    const replyIds = msgs.filter((m) => m.reply_to_id).map((m) => m.reply_to_id!)
+    if (replyIds.length === 0) return msgs.map((m) => ({ ...m, decrypted_content: m.encrypted_content }))
+
+    const { data: replyMsgs } = await supabase
+      .from("messages")
+      .select("id, sender_id, encrypted_content")
+      .in("id", replyIds)
+
+    const replyMap = new Map<string, any>()
+    if (replyMsgs) {
+      for (const rm of replyMsgs) {
+        const { data: senderProfile } = await supabase
+          .from("profiles")
+          .select("display_name")
+          .eq("id", rm.sender_id)
+          .single() as any
+
+        replyMap.set(rm.id, {
+          id: rm.id,
+          content: rm.encrypted_content,
+          senderName: senderProfile?.display_name || "Unknown",
+        })
+      }
+    }
+
+    return msgs.map((m) => ({
+      ...m,
+      decrypted_content: m.encrypted_content,
+      replyTo: m.reply_to_id ? replyMap.get(m.reply_to_id) || undefined : undefined,
+    }))
   }
 
   useEffect(() => {
@@ -89,12 +119,10 @@ export default function ConversationView({
           table: "messages",
           filter: `conversation_id=eq.${conversationId}`,
         },
-        (payload: any) => {
+        async (payload: any) => {
           const newMsg = payload.new as Message
-          setMessages((prev) => [
-            ...prev,
-            { ...newMsg, decrypted_content: newMsg.encrypted_content },
-          ])
+          const enriched = await enrichMessages([newMsg])
+          setMessages((prev) => [...prev, enriched[0]])
         },
       )
       .subscribe()
@@ -121,15 +149,26 @@ export default function ConversationView({
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      await supabase.from("messages").insert({
+      const msg: any = {
         conversation_id: conversationId,
         sender_id: user.id,
         encrypted_content: content,
         nonce: "",
-      })
+      }
+
+      if (replyTarget) {
+        msg.reply_to_id = replyTarget.id
+      }
+
+      await supabase.from("messages").insert(msg)
+      setReplyTarget(null)
     },
-    [conversationId, supabase],
+    [conversationId, supabase, replyTarget],
   )
+
+  function handleReply(msg: ReplyTo) {
+    setReplyTarget(msg)
+  }
 
   if (loading) {
     return (
@@ -143,7 +182,7 @@ export default function ConversationView({
     otherUser?.display_name || otherUser?.email || "Unknown"
 
   return (
-    <div className="flex-1 flex flex-col h-dvh">
+    <div className="flex-1 flex flex-col min-h-0">
       <ConversationHeader
         name={displayName}
         avatarUrl={otherUser?.avatar_url}
@@ -153,7 +192,7 @@ export default function ConversationView({
         className="flex-1 min-h-0 overflow-y-auto flex flex-col-reverse bg-muted/20"
         onScroll={handleScroll}
       >
-        <div className="flex flex-col gap-1 px-4 py-2">
+        <div className="flex flex-col gap-0.5 px-4 py-2">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <p className="text-sm text-muted-foreground">
@@ -164,25 +203,33 @@ export default function ConversationView({
               </p>
             </div>
           )}
-          {messages.map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              content={msg.decrypted_content || ""}
-              isOwn={msg.sender_id === currentUserId}
-              timestamp={msg.created_at}
-              senderName={
-                msg.sender_id !== currentUserId
-                  ? displayName
-                  : undefined
-              }
-              showSenderName={false}
-            />
-          ))}
+          {messages.map((msg, i) => {
+            const prevMsg = i > 0 ? messages[i - 1] : null
+            const showHeader = !prevMsg || prevMsg.sender_id !== msg.sender_id
+
+            return (
+              <div key={msg.id} className="animate-in slide-in-from-bottom-2 fade-in duration-200">
+                {showHeader && !msg.replyTo && (
+                  <div className="h-1" />
+                )}
+                <MessageBubble
+                  message={msg}
+                  isOwn={msg.sender_id === currentUserId}
+                  onReply={handleReply}
+                  currentUserId={currentUserId}
+                />
+              </div>
+            )
+          })}
           <div ref={scrollAnchorRef} className="h-px" />
         </div>
       </div>
 
-      <MessageInput onSend={handleSend} />
+      <MessageInput
+        onSend={handleSend}
+        replyTo={replyTarget}
+        onCancelReply={() => setReplyTarget(null)}
+      />
     </div>
   )
 }

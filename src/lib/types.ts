@@ -1,5 +1,11 @@
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
+export interface ReplyTo {
+  id: string
+  content: string
+  senderName: string
+}
+
 export interface Profile {
   id: string
   email: string
@@ -34,9 +40,12 @@ export interface Message {
   encrypted_content: string
   nonce: string
   created_at: string
+  reply_to_id?: string | null
+  reactions?: Record<string, string[]>
   sender?: Profile
   decrypted_content?: string
-  status?: 'sending' | 'sent' | 'delivered' | 'read'
+  status?: "sending" | "sent" | "delivered" | "read"
+  replyTo?: ReplyTo | null
 }
 
 export interface Invite {
@@ -44,7 +53,7 @@ export interface Invite {
   sender_id: string
   recipient_email: string
   code: string
-  status: 'pending' | 'accepted' | 'expired'
+  status: "pending" | "accepted" | "expired"
   created_at: string
   accepted_at: string | null
   sender?: Profile
