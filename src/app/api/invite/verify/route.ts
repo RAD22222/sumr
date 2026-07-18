@@ -3,10 +3,10 @@ import { createAdminClient } from "@/lib/supabase/admin"
 
 export async function POST(request: Request) {
   try {
-    const { code, email } = await request.json()
+    const { code } = await request.json()
 
-    if (!code || !email) {
-      return NextResponse.json({ valid: false, error: "Code and email required" }, { status: 400 })
+    if (!code) {
+      return NextResponse.json({ valid: false, error: "Code required" }, { status: 400 })
     }
 
     const adminClient = createAdminClient()
@@ -14,7 +14,6 @@ export async function POST(request: Request) {
       .from("invites")
       .select("id, status")
       .eq("code", code)
-      .eq("recipient_email", email)
       .single()
 
     if (error || !data || data.status !== "pending") {

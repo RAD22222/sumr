@@ -31,7 +31,7 @@ export default function SignUpForm() {
     const verifyRes = await fetch("/api/invite/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: inviteCode, email }),
+      body: JSON.stringify({ code: inviteCode }),
     })
     const verify = await verifyRes.json()
 
