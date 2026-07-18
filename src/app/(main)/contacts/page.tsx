@@ -7,16 +7,21 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Search, MessageSquare, Loader2 } from "lucide-react"
+import { Search, MessageSquare, Loader2, UserPlus, X } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 import { useChatStore } from "@/store/chat-store"
+import { addFriendByCode } from "@/app/actions/friendCode"
 import type { Profile } from "@/lib/types"
 
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<Profile[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [showAddFriend, setShowAddFriend] = useState(false)
+  const [addUsername, setAddUsername] = useState("")
+  const [addCode, setAddCode] = useState("")
+  const [adding, setAdding] = useState(false)
   const supabase = getSupabaseClient()
   const router = useRouter()
 
@@ -28,43 +33,67 @@ export default function ContactsPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { data: acceptedInvites } = await supabase
-      .from("invites")
-      .select("sender_id, recipient_email, code")
-      .eq("status", "accepted")
-      .or(`sender_id.eq.${user.id},recipient_email.eq.${user.email}`) as any
+    const { data: conversations } = await supabase
+      .from("conversation_participants")
+      .select("conversation_id")
+      .eq("user_id", user.id)
 
-    if (!acceptedInvites || !Array.isArray(acceptedInvites)) {
+    if (!conversations || conversations.length === 0) {
       setLoading(false)
       return
     }
 
-    const emails: string[] = acceptedInvites.map((i: any) => i.recipient_email)
-    const senderIds: string[] = acceptedInvites
-      .filter((i: any) => i.recipient_email === user.email)
-      .map((i: any) => i.sender_id)
+    const convIds = conversations.map((c: any) => c.conversation_id)
 
-    const orConditions: string[] = []
-    if (emails.length > 0) {
-      orConditions.push(`email.in.(${emails.map((e) => `"${e}"`).join(",")})`)
-    }
-    if (senderIds.length > 0) {
-      orConditions.push(`id.in.(${senderIds.map((s) => `"${s}"`).join(",")})`)
-    }
+    const { data: otherParticipants } = await supabase
+      .from("conversation_participants")
+      .select("user_id")
+      .in("conversation_id", convIds)
+      .neq("user_id", user.id)
 
-    if (orConditions.length === 0) {
+    if (!otherParticipants || otherParticipants.length === 0) {
       setLoading(false)
       return
     }
+
+    const userIds = [...new Set(otherParticipants.map((p: any) => p.user_id))]
 
     const { data: profiles } = await supabase
       .from("profiles")
       .select("*")
-      .or(orConditions.join(","))
-      .neq("id", user.id)
+      .in("id", userIds)
 
     setContacts(profiles || [])
     setLoading(false)
+  }
+
+  async function handleAddFriend() {
+    if (!addUsername.trim() || !addCode.trim()) {
+      toast.error("Fill in both fields")
+      return
+    }
+
+    setAdding(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      toast.error("Not logged in")
+      setAdding(false)
+      return
+    }
+
+    const result = await addFriendByCode(user.id, addUsername.trim(), addCode.trim())
+
+    if (result.error) {
+      toast.error(result.error)
+      setAdding(false)
+      return
+    }
+
+    toast.success("Connected!")
+    setShowAddFriend(false)
+    setAddUsername("")
+    setAddCode("")
+    loadContacts()
   }
 
   async function startChat(contactId: string) {
@@ -137,8 +166,14 @@ export default function ContactsPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="p-4 border-b">
-        <h1 className="text-lg font-semibold mb-3">Contacts</h1>
+      <div className="p-4 border-b space-y-3">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-semibold">Contacts</h1>
+          <Button variant="outline" size="sm" onClick={() => setShowAddFriend(true)}>
+            <UserPlus className="h-4 w-4 mr-1" />
+            Add friend
+          </Button>
+        </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -150,6 +185,35 @@ export default function ContactsPage() {
         </div>
       </div>
 
+      {showAddFriend && (
+        <div className="p-4 border-b bg-muted/30">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium">Add a friend</h2>
+            <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowAddFriend(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="space-y-2">
+            <Input
+              placeholder="Their username (display name)"
+              value={addUsername}
+              onChange={(e) => setAddUsername(e.target.value)}
+            />
+            <Input
+              placeholder="Their 6-digit code (from settings)"
+              value={addCode}
+              onChange={(e) => setAddCode(e.target.value)}
+              maxLength={6}
+              className="font-mono tracking-widest"
+            />
+            <Button className="w-full" size="sm" onClick={handleAddFriend} disabled={adding}>
+              {adding && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Add friend
+            </Button>
+          </div>
+        </div>
+      )}
+
       <ScrollArea className="flex-1">
         {loading ? (
           <div className="flex items-center justify-center py-12">
@@ -157,10 +221,19 @@ export default function ContactsPage() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-            <p className="text-sm text-muted-foreground">No contacts found</p>
+            <p className="text-sm text-muted-foreground">No contacts yet</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Invite friends to start chatting
+              Share your friend code from Settings to connect
             </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={() => setShowAddFriend(true)}
+            >
+              <UserPlus className="h-4 w-4 mr-1" />
+              Add a friend
+            </Button>
           </div>
         ) : (
           <div className="divide-y">

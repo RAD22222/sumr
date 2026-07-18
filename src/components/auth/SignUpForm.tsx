@@ -9,42 +9,45 @@ import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
 import Link from "next/link"
-import { verifyInviteCode, markInviteAccepted } from "@/app/actions/verifyInvite"
 
 export default function SignUpForm() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [displayName, setDisplayName] = useState("")
-  const [inviteCode, setInviteCode] = useState("")
   const [loading, setLoading] = useState(false)
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!inviteCode) {
-      toast.error("Invite code is required")
+    if (!displayName.trim()) {
+      toast.error("Display name is required")
       return
     }
     setLoading(true)
 
     try {
-      const result = await verifyInviteCode(inviteCode.toUpperCase())
-      if (!result.valid) {
-        toast.error("Invalid or used invite code")
-        setLoading(false)
-        return
-      }
-
       await e2ee.initialize(password)
       const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
 
       const supabase = getSupabaseClient()
 
+      const { data: check } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("display_name", displayName.trim())
+        .maybeSingle()
+
+      if (check) {
+        toast.error("Display name already taken")
+        setLoading(false)
+        return
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          data: { display_name: displayName || email.split("@")[0] },
+          data: { display_name: displayName.trim() },
         },
       })
 
@@ -58,7 +61,7 @@ export default function SignUpForm() {
         await supabase.from("profiles").upsert({
           id: data.user.id,
           email,
-          display_name: displayName || email.split("@")[0],
+          display_name: displayName.trim(),
           public_key: publicKey,
           encrypted_private_key: encryptedPrivateKey,
         })
@@ -67,8 +70,6 @@ export default function SignUpForm() {
       if (!data.session) {
         await supabase.auth.signInWithPassword({ email, password })
       }
-
-      await markInviteAccepted(result.inviteId!)
 
       sessionStorage.setItem("sumr_master_password", password)
       toast.success("Account created!")
@@ -85,23 +86,17 @@ export default function SignUpForm() {
       <div className="text-center">
         <h1 className="text-2xl font-bold">Create account</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          You need an invite code from a friend
+          Anyone can join — no invite needed
         </p>
       </div>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Input
           type="text"
-          placeholder="Invite code"
-          value={inviteCode}
-          onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-          required
-          className="uppercase tracking-widest"
-        />
-        <Input
-          type="text"
-          placeholder="Display name"
+          placeholder="Display name (username)"
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
+          required
+          minLength={2}
         />
         <Input
           type="email"

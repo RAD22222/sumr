@@ -1,26 +1,50 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { getSupabaseClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { toast } from "sonner"
-import { Loader2, Sun, Moon, Monitor, Shield } from "lucide-react"
+import { Loader2, Sun, Moon, Monitor, Shield, Copy, Check } from "lucide-react"
 import { useTheme } from "next-themes"
 import type { Profile } from "@/lib/types"
+import { getMyFriendCode } from "@/app/actions/friendCode"
 
 export default function SettingsPage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [displayName, setDisplayName] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [friendCode, setFriendCode] = useState("")
+  const [expiresIn, setExpiresIn] = useState(0)
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const supabase = getSupabaseClient()
   const { theme, setTheme } = useTheme()
 
   useEffect(() => {
     loadProfile()
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
   }, [])
+
+  useEffect(() => {
+    if (profile) {
+      fetchCode()
+      if (timerRef.current) clearInterval(timerRef.current)
+      timerRef.current = setInterval(fetchCode, 5000)
+    }
+  }, [profile])
+
+  async function fetchCode() {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const result = await getMyFriendCode(user.id)
+    setFriendCode(result.code)
+    setExpiresIn(result.expiresIn)
+  }
 
   async function loadProfile() {
     setLoading(true)
@@ -93,6 +117,12 @@ export default function SettingsPage() {
     setSaving(false)
   }
 
+  function handleCopy() {
+    navigator.clipboard.writeText(friendCode)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center flex-1">
@@ -108,7 +138,37 @@ export default function SettingsPage() {
       </div>
 
       <div className="flex-1 p-4 space-y-6 max-w-lg">
-        {/* Profile section */}
+        <section className="space-y-4">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+            Friend Code
+          </h2>
+
+          <div className="rounded-lg border p-4 text-center">
+            <p className="text-xs text-muted-foreground mb-2">
+              Share this code with friends to connect. It changes every 60 seconds.
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <span className="text-3xl font-mono font-bold tracking-widest">
+                {friendCode}
+              </span>
+              <Button variant="ghost" size="icon" onClick={handleCopy}>
+                {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              </Button>
+            </div>
+            <div className="mt-2 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <div className="h-1.5 w-24 rounded-full bg-muted overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-1000 rounded-full"
+                  style={{ width: `${(expiresIn / 60) * 100}%` }}
+                />
+              </div>
+              <span>{expiresIn}s</span>
+            </div>
+          </div>
+        </section>
+
+        <hr className="border-t" />
+
         <section className="space-y-4">
           <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
             Profile
@@ -159,7 +219,6 @@ export default function SettingsPage() {
 
         <hr className="border-t" />
 
-        {/* Theme section */}
         <section className="space-y-4">
           <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
             Appearance
@@ -197,7 +256,6 @@ export default function SettingsPage() {
 
         <hr className="border-t" />
 
-        {/* Security section */}
         <section className="space-y-4">
           <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
             Security
