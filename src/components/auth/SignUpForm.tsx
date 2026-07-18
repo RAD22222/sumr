@@ -2,13 +2,14 @@
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
+import { getSupabaseClient } from "@/lib/supabase/client"
 import { e2ee } from "@/lib/crypto/encryption"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
 import Link from "next/link"
-import { signupWithInvite } from "@/app/actions/signup"
+import { verifyInviteCode, markInviteAccepted } from "@/app/actions/verifyInvite"
 
 export default function SignUpForm() {
   const [email, setEmail] = useState("")
@@ -27,30 +28,51 @@ export default function SignUpForm() {
     setLoading(true)
 
     try {
-      await e2ee.initialize(password)
-      const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
-
-      const result = await signupWithInvite({
-        email,
-        password,
-        displayName: displayName || email.split("@")[0],
-        inviteCode,
-        publicKey,
-        encryptedPrivateKey,
-      })
-
-      if (result.error) {
-        toast.error(result.error)
+      const result = await verifyInviteCode(inviteCode.toUpperCase())
+      if (!result.valid) {
+        toast.error("Invalid or used invite code")
         setLoading(false)
         return
       }
 
-      if (result.success) {
-        sessionStorage.setItem("sumr_master_password", password)
+      await e2ee.initialize(password)
+      const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
+
+      const supabase = getSupabaseClient()
+
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { display_name: displayName || email.split("@")[0] },
+        },
+      })
+
+      if (error) {
+        toast.error(error.message)
+        setLoading(false)
+        return
       }
 
-      toast.success("Account created! Check your email to verify.")
-      router.push("/")
+      if (data.user) {
+        await supabase.from("profiles").upsert({
+          id: data.user.id,
+          email,
+          display_name: displayName || email.split("@")[0],
+          public_key: publicKey,
+          encrypted_private_key: encryptedPrivateKey,
+        })
+      }
+
+      if (!data.session) {
+        await supabase.auth.signInWithPassword({ email, password })
+      }
+
+      await markInviteAccepted(result.inviteId!)
+
+      sessionStorage.setItem("sumr_master_password", password)
+      toast.success("Account created!")
+      router.push("/chats")
     } catch {
       toast.error("Signup failed. Try refreshing the page.")
     }
