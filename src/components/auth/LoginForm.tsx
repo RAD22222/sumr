@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { getSupabaseClient } from "@/lib/supabase/client"
+import { e2ee } from "@/lib/crypto/encryption"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
@@ -20,7 +21,7 @@ export default function LoginForm() {
     setLoading(true)
 
     const supabase = getSupabaseClient()
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
@@ -29,6 +30,12 @@ export default function LoginForm() {
       toast.error(error.message)
       setLoading(false)
       return
+    }
+
+    if (data.user) {
+      // Initialize E2EE with the user's password AND their userId so the
+      // PBKDF2 salt is unique per user (matches what was used at signup).
+      await e2ee.initialize(password, data.user.id)
     }
 
     sessionStorage.setItem("sumr_master_password", password)

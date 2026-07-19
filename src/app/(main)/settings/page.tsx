@@ -39,9 +39,8 @@ export default function SettingsPage() {
   }, [profile])
 
   async function fetchCode() {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const result = await getMyFriendCode(user.id)
+    const result = await getMyFriendCode()
+    if ("error" in result) return
     setFriendCode(result.code)
     setExpiresIn(result.expiresIn)
   }

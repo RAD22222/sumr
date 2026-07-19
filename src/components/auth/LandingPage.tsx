@@ -32,7 +32,7 @@ export default function LandingPage() {
     setLoading(true)
 
     const supabase = getSupabaseClient()
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     })
@@ -41,6 +41,10 @@ export default function LandingPage() {
       toast.error(error.message)
       setLoading(false)
       return
+    }
+
+    if (data.user) {
+      await e2ee.initialize(password, data.user.id)
     }
 
     sessionStorage.setItem("sumr_master_password", password)
@@ -87,7 +91,7 @@ export default function LandingPage() {
     }
 
     if (data.user) {
-      await e2ee.initialize(password)
+      await e2ee.initialize(password, data.user.id)
       const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
 
       await supabase.from("profiles").upsert({

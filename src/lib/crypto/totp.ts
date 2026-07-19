@@ -1,9 +1,28 @@
 import { createHmac } from "crypto"
 
+/**
+ * Time-step in seconds for friend code generation.
+ * A code is valid for the current step and one step prior (clock skew tolerance).
+ */
 const STEP = 60
 
+/**
+ * Returns the HMAC secret used to generate per-user friend code secrets.
+ *
+ * Requires FRIEND_CODE_SECRET to be set in the environment.  We deliberately
+ * do NOT fall back to SUPABASE_SERVICE_ROLE_KEY — that key is the database
+ * admin credential and must never be used as a HMAC secret or exposed in any
+ * other context.
+ */
 function getMasterSecret(): string {
-  return process.env.FRIEND_CODE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY || "fallback"
+  const secret = process.env.FRIEND_CODE_SECRET
+  if (!secret) {
+    throw new Error(
+      "FRIEND_CODE_SECRET environment variable is not set. " +
+      "Add a random 32+ character secret to your .env.local file.",
+    )
+  }
+  return secret
 }
 
 function getUserSecret(userId: string): string {
@@ -14,7 +33,9 @@ function totpForCounter(secret: string, counter: number): string {
   const buf = Buffer.alloc(8)
   buf.writeBigUint64BE(BigInt(counter))
 
-  const hmac = createHmac("sha1", Buffer.from(secret, "hex")).update(buf).digest()
+  const hmac = createHmac("sha1", Buffer.from(secret, "hex"))
+    .update(buf)
+    .digest()
 
   const offset = hmac[hmac.length - 1] & 0xf
   const code =
@@ -23,7 +44,7 @@ function totpForCounter(secret: string, counter: number): string {
     ((hmac[offset + 2] & 0xff) << 8) |
     (hmac[offset + 3] & 0xff)
 
-  return (code % 1000000).toString().padStart(6, "0")
+  return (code % 1_000_000).toString().padStart(6, "0")
 }
 
 export function generateFriendCode(userId: string): string {
@@ -36,6 +57,10 @@ export function getCodeExpiry(): number {
   return STEP - (Math.floor(Date.now() / 1000) % STEP)
 }
 
+/**
+ * Accepts codes from the current time-step and one step prior to handle clock
+ * skew between devices.
+ */
 export function verifyFriendCode(userId: string, code: string): boolean {
   const secret = getUserSecret(userId)
   const currentCounter = Math.floor(Date.now() / 1000 / STEP)

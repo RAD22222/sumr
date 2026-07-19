@@ -1,8 +1,45 @@
-const SALT = "sumr-e2ee-v1"
-const ITERATIONS = 600000
+import { arrayBufferToBase64, base64ToArrayBuffer } from "./utils"
+
+export { arrayBufferToBase64, base64ToArrayBuffer }
+
+/**
+ * The number of PBKDF2 iterations — kept high to resist brute-force.
+ */
+const ITERATIONS = 600_000
 const KEY_LENGTH = 256
 
-export async function deriveEncryptionKey(password: string): Promise<CryptoKey> {
+/**
+ * Derive a per-user PBKDF2 salt from the userId so that every user has a
+ * unique salt without needing to persist one to the database.  We do NOT use a
+ * static string because a shared salt completely defeats key-stretching.
+ *
+ * Strategy: HMAC-SHA256(userId, "sumr-salt-v1") → 32-byte deterministic salt
+ * that is unique per user and stable across sessions.
+ */
+async function deriveUserSalt(userId: string): Promise<Uint8Array<ArrayBuffer>> {
+  const enc = new TextEncoder()
+  const baseKey = await crypto.subtle.importKey(
+    "raw",
+    enc.encode("sumr-salt-v1"),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  )
+  const sig = await crypto.subtle.sign("HMAC", baseKey, enc.encode(userId))
+  return new Uint8Array(sig) as Uint8Array<ArrayBuffer>
+}
+
+/**
+ * Derive an AES-GCM-256 encryption key from the user's master password.
+ * The salt is derived from the userId so it is unique per user.
+ *
+ * @param password  The user's master password (never leaves the device).
+ * @param userId    The Supabase user UUID — used to derive a per-user salt.
+ */
+export async function deriveEncryptionKey(
+  password: string,
+  userId: string,
+): Promise<CryptoKey> {
   const enc = new TextEncoder()
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
@@ -12,10 +49,12 @@ export async function deriveEncryptionKey(password: string): Promise<CryptoKey> 
     ["deriveBits", "deriveKey"],
   )
 
+  const salt = await deriveUserSalt(userId)
+
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt: enc.encode(SALT),
+      salt,
       iterations: ITERATIONS,
       hash: "SHA-256",
     },
@@ -26,7 +65,13 @@ export async function deriveEncryptionKey(password: string): Promise<CryptoKey> 
   )
 }
 
-export async function generateConversationKey(): Promise<{ key: CryptoKey; raw: ArrayBuffer }> {
+/**
+ * Generate a fresh random AES-GCM-256 symmetric key for a conversation.
+ */
+export async function generateConversationKey(): Promise<{
+  key: CryptoKey
+  raw: ArrayBuffer
+}> {
   const key = await crypto.subtle.generateKey(
     { name: "AES-GCM", length: 256 },
     true,
@@ -36,6 +81,10 @@ export async function generateConversationKey(): Promise<{ key: CryptoKey; raw: 
   return { key, raw }
 }
 
+/**
+ * Encrypt an ArrayBuffer with the master key.
+ * The IV is prepended to the ciphertext so a single base64 blob is stored.
+ */
 export async function encryptKeyWithMasterKey(
   masterKey: CryptoKey,
   keyToEncrypt: ArrayBuffer,
@@ -54,6 +103,9 @@ export async function encryptKeyWithMasterKey(
   return arrayBufferToBase64(combined.buffer)
 }
 
+/**
+ * Decrypt a blob previously produced by `encryptKeyWithMasterKey`.
+ */
 export async function decryptKeyWithMasterKey(
   masterKey: CryptoKey,
   encryptedData: string,
@@ -62,27 +114,5 @@ export async function decryptKeyWithMasterKey(
   const iv = new Uint8Array(combined.slice(0, 12))
   const data = combined.slice(12)
 
-  return crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    masterKey,
-    data,
-  )
-}
-
-export function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ""
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-export function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes.buffer
+  return crypto.subtle.decrypt({ name: "AES-GCM", iv }, masterKey, data)
 }

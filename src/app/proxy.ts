@@ -28,19 +28,25 @@ export async function proxy(request: NextRequest) {
     },
   )
 
-  const { data: { session } } = await supabase.auth.getSession()
+  /**
+   * Use getUser() — not getSession() — for server-side authentication checks.
+   * getSession() only reads the JWT from the cookie without verifying it
+   * against Supabase's auth server, making it possible to spoof.
+   * getUser() performs a network request to validate the token.
+   */
+  const { data: { user } } = await supabase.auth.getUser()
   const pathname = request.nextUrl.pathname
 
   const isProtected = protectedRoutes.some((route) => pathname.startsWith(route))
   const isAuth = authRoutes.some((route) => pathname.startsWith(route))
 
-  if (isProtected && !session) {
+  if (isProtected && !user) {
     const url = request.nextUrl.clone()
     url.pathname = "/"
     return NextResponse.redirect(url)
   }
 
-  if (isAuth && session) {
+  if (isAuth && user) {
     const url = request.nextUrl.clone()
     url.pathname = "/chats"
     return NextResponse.redirect(url)

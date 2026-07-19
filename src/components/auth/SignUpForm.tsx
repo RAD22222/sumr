@@ -26,11 +26,9 @@ export default function SignUpForm() {
     setLoading(true)
 
     try {
-      await e2ee.initialize(password)
-      const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
-
       const supabase = getSupabaseClient()
 
+      // Check display name availability before creating the auth user.
       const { data: check } = await supabase
         .from("profiles")
         .select("id")
@@ -57,16 +55,26 @@ export default function SignUpForm() {
         return
       }
 
-      if (data.user) {
-        await supabase.from("profiles").upsert({
-          id: data.user.id,
-          email,
-          display_name: displayName.trim(),
-          public_key: publicKey,
-          encrypted_private_key: encryptedPrivateKey,
-        })
+      if (!data.user) {
+        toast.error("Signup failed — no user returned")
+        setLoading(false)
+        return
       }
 
+      // Initialize E2EE with the user's password AND their userId so the
+      // PBKDF2 salt is unique per user.
+      await e2ee.initialize(password, data.user.id)
+      const { publicKey, encryptedPrivateKey } = await e2ee.createKeys()
+
+      await supabase.from("profiles").upsert({
+        id: data.user.id,
+        email,
+        display_name: displayName.trim(),
+        public_key: publicKey,
+        encrypted_private_key: encryptedPrivateKey,
+      })
+
+      // If email confirmation is disabled, the session comes back immediately.
       if (!data.session) {
         await supabase.auth.signInWithPassword({ email, password })
       }

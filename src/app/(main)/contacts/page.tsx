@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { getSupabaseClient } from "@/lib/supabase/client"
 import { e2ee } from "@/lib/crypto/encryption"
+import { useChatStore } from "@/store/chat-store"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,8 +11,11 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Search, MessageSquare, Loader2, UserPlus, X } from "lucide-react"
 import { toast } from "sonner"
 import { useRouter } from "next/navigation"
-import { useChatStore } from "@/store/chat-store"
-import { addFriendByCode } from "@/app/actions/friendCode"
+import {
+  addFriendByCode,
+  findConversationBetween,
+  updateConversationKey,
+} from "@/app/actions/friendCode"
 import type { Profile } from "@/lib/types"
 
 export default function ContactsPage() {
@@ -27,7 +31,7 @@ export default function ContactsPage() {
 
   useEffect(() => {
     loadContacts()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadContacts() {
     const { data: { user } } = await supabase.auth.getUser()
@@ -45,6 +49,7 @@ export default function ContactsPage() {
 
     const convIds = conversations.map((c: any) => c.conversation_id)
 
+    // Fetch the OTHER participants (exclude current user).
     const { data: otherParticipants } = await supabase
       .from("conversation_participants")
       .select("user_id")
@@ -74,16 +79,11 @@ export default function ContactsPage() {
     }
 
     setAdding(true)
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      toast.error("Not logged in")
-      setAdding(false)
-      return
-    }
+    // addFriendByCode is a server action that reads the current user's ID
+    // from the session — we no longer pass it from the client.
+    const result = await addFriendByCode(addUsername.trim(), addCode.trim())
 
-    const result = await addFriendByCode(user.id, addUsername.trim(), addCode.trim())
-
-    if (result.error) {
+    if (result.error && result.error !== "Already connected") {
       toast.error(result.error)
       setAdding(false)
       return
@@ -94,68 +94,94 @@ export default function ContactsPage() {
     setAddUsername("")
     setAddCode("")
     loadContacts()
+    setAdding(false)
   }
 
   async function startChat(contactId: string) {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const password = sessionStorage.getItem("sumr_master_password")
-    if (!password) {
-      toast.error("Please unlock encryption first (re-login)")
+    // Look up the existing conversation — created by addFriendByCode.
+    const { conversationId, error: findError } = await findConversationBetween(contactId)
+
+    if (findError) {
+      toast.error(findError)
       return
     }
 
-    await e2ee.initialize(password)
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("encrypted_private_key, public_key")
-      .eq("id", user.id)
-      .single() as any
-
-    if (profile?.encrypted_private_key && profile?.public_key) {
-      await e2ee.loadKeys(profile.encrypted_private_key, profile.public_key)
+    if (!conversationId) {
+      toast.error("No conversation found. Add this person as a friend first.")
+      return
     }
 
+    // Fetch the other user's public key for the E2EE key exchange.
     const { data: otherProfile } = await supabase
       .from("profiles")
-      .select("public_key, id")
+      .select("public_key")
       .eq("id", contactId)
       .single() as any
 
     if (!otherProfile?.public_key) {
-      toast.error("Contact hasn't set up encryption yet")
+      // No public key — navigate anyway (key exchange can't be done yet).
+      router.push(`/chats/${conversationId}`)
       return
     }
 
-    const convKeys = await e2ee.createConversationKey(otherProfile.public_key)
+    // Check if we already have a key for this conversation.
+    const { data: myParticipant } = await supabase
+      .from("conversation_participants")
+      .select("encrypted_symmetric_key")
+      .eq("conversation_id", conversationId)
+      .eq("user_id", user.id)
+      .single() as any
 
-    const { data: existing } = await (supabase.rpc as any)(
-      "get_or_create_conversation",
-      { user_id: user.id, other_user_id: contactId },
-    )
+    const hasKey = !!myParticipant?.encrypted_symmetric_key
 
-    if (existing) {
-      await supabase
-        .from("conversation_participants")
-        .update({ encrypted_symmetric_key: convKeys.encryptedForSelf })
-        .eq("conversation_id", existing)
-        .eq("user_id", user.id)
+    if (!hasKey) {
+      // Perform E2EE key exchange — create a new symmetric key and encrypt it
+      // for both parties.  E2EE should already be initialized from login, but
+      // we load the RSA keys here if they aren't present yet.
+      try {
+        if (!e2ee.isInitialized()) {
+          toast.error("Please re-login to set up encryption for this chat.")
+          return
+        }
 
-      await supabase
-        .from("conversation_participants")
-        .update({ encrypted_symmetric_key: convKeys.encryptedForOther })
-        .eq("conversation_id", existing)
-        .eq("user_id", contactId)
+        const { data: myProfile } = await supabase
+          .from("profiles")
+          .select("encrypted_private_key, public_key")
+          .eq("id", user.id)
+          .single() as any
 
-      const store = useChatStore.getState()
-      store.setConversationKey(existing, convKeys.raw)
+        if (myProfile?.encrypted_private_key && myProfile?.public_key) {
+          await e2ee.loadKeys(myProfile.encrypted_private_key, myProfile.public_key)
+        }
 
-      router.push(`/chats/${existing}`)
-    } else {
-      toast.error("Could not create conversation")
+        const convKeys = await e2ee.createConversationKey(otherProfile.public_key)
+
+        const keyResult = await updateConversationKey(
+          conversationId,
+          convKeys.encryptedForSelf,
+          contactId,
+          convKeys.encryptedForOther,
+        )
+
+        if (keyResult.error) {
+          toast.error("Failed to set up encryption: " + keyResult.error)
+          return
+        }
+
+        // Cache the raw key in the store.
+        const store = useChatStore.getState()
+        store.setConversationKey(conversationId, convKeys.raw)
+      } catch (err) {
+        console.error("E2EE key exchange failed:", err)
+        toast.error("Encryption setup failed. Please try again.")
+        return
+      }
     }
+
+    router.push(`/chats/${conversationId}`)
   }
 
   const filtered = contacts.filter(

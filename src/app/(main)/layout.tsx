@@ -9,24 +9,32 @@ export default async function MainLayout({
   children: React.ReactNode
 }) {
   const supabase = await createServerSupabaseClient()
-  const { data: { session } } = await supabase.auth.getSession()
 
-  if (!session) {
+  /**
+   * Use getUser() — not getSession() — to verify the JWT against Supabase's
+   * auth server.  getSession() is unauthenticated (reads the cookie only) and
+   * can be spoofed by manipulating the cookie value.
+   */
+  const { data: { user }, error } = await supabase.auth.getUser()
+
+  if (error || !user) {
     redirect("/")
   }
 
   let { data: profile } = await supabase
     .from("profiles")
     .select("*")
-    .eq("id", session.user.id)
+    .eq("id", user.id)
     .single()
 
   if (!profile) {
+    // Fallback: create a profile for users who signed up before the trigger
+    // was in place (e.g., via OAuth or a prior schema version).
     const admin = createAdminClient()
     await admin.from("profiles").upsert({
-      id: session.user.id,
-      email: session.user.email,
-      display_name: session.user.email?.split("@")[0],
+      id: user.id,
+      email: user.email,
+      display_name: user.email?.split("@")[0] ?? null,
       public_key: "",
       encrypted_private_key: "",
     })
@@ -34,14 +42,14 @@ export default async function MainLayout({
     const { data: newProfile } = await supabase
       .from("profiles")
       .select("*")
-      .eq("id", session.user.id)
+      .eq("id", user.id)
       .single()
 
     profile = newProfile
   }
 
   return (
-    <AppShell user={session.user} profile={profile}>
+    <AppShell user={user} profile={profile}>
       {children}
     </AppShell>
   )

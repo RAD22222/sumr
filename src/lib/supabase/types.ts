@@ -10,6 +10,7 @@ export interface Database {
           display_name: string | null
           avatar_url: string | null
           public_key: string | null
+          encrypted_private_key: string | null
           created_at: string
         }
         Insert: {
@@ -18,6 +19,7 @@ export interface Database {
           display_name?: string | null
           avatar_url?: string | null
           public_key?: string | null
+          encrypted_private_key?: string | null
           created_at?: string
         }
         Update: {
@@ -26,6 +28,7 @@ export interface Database {
           display_name?: string | null
           avatar_url?: string | null
           public_key?: string | null
+          encrypted_private_key?: string | null
           created_at?: string
         }
       }
@@ -73,6 +76,7 @@ export interface Database {
           sender_id: string
           encrypted_content: string
           nonce: string
+          reply_to_id: string | null
           created_at: string
         }
         Insert: {
@@ -81,6 +85,7 @@ export interface Database {
           sender_id: string
           encrypted_content: string
           nonce: string
+          reply_to_id?: string | null
           created_at?: string
         }
         Update: {
@@ -89,6 +94,7 @@ export interface Database {
           sender_id?: string
           encrypted_content?: string
           nonce?: string
+          reply_to_id?: string | null
           created_at?: string
         }
       }

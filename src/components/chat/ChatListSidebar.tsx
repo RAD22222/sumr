@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { getSupabaseClient } from "@/lib/supabase/client"
 import { useChatStore } from "@/store/chat-store"
@@ -18,15 +18,23 @@ export default function ChatListSidebar() {
   const pathname = usePathname()
   const supabase = getSupabaseClient()
 
+  /**
+   * Keep the current user's ID in a ref to avoid re-running effects when
+   * the identity changes (it won't mid-session, but avoids stale captures).
+   */
+  const currentUserIdRef = useRef<string | null>(null)
+
   useEffect(() => {
     loadConversations()
 
+    // Re-fetch the sidebar whenever any message is inserted — this keeps
+    // last_message_at up to date for the sort order.
     const channel = supabase
-      .channel("conversations")
+      .channel("conversations-sidebar")
       .on(
         "postgres_changes",
         {
-          event: "*",
+          event: "INSERT",
           schema: "public",
           table: "messages",
         },
@@ -39,12 +47,14 @@ export default function ChatListSidebar() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadConversations() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
+    currentUserIdRef.current = user.id
 
+    // Fetch the user's conversations + their metadata in one join.
     const { data } = await supabase
       .from("conversation_participants")
       .select(
@@ -65,6 +75,14 @@ export default function ChatListSidebar() {
 
     const conversationIds = data.map((d: any) => d.conversation_id)
 
+    if (conversationIds.length === 0) {
+      setConversations([])
+      setLoading(false)
+      return
+    }
+
+    // Fetch ALL participants for these conversations so we can find the
+    // OTHER user's profile (not our own).
     const { data: participants } = await supabase
       .from("conversation_participants")
       .select(
@@ -75,25 +93,16 @@ export default function ChatListSidebar() {
       `,
       )
       .in("conversation_id", conversationIds)
-
-    const { data: messages } = await supabase
-      .from("messages")
-      .select("*")
-      .in("conversation_id", conversationIds)
-      .order("created_at", { ascending: false })
-
-    const latestMessages: Record<string, any> = {}
-    messages?.forEach((msg) => {
-      if (!latestMessages[msg.conversation_id]) {
-        latestMessages[msg.conversation_id] = msg
-      }
-    })
+      // Exclude the current user — we only want the other participant.
+      .neq("user_id", user.id)
 
     const convs: Conversation[] = data.map((d: any) => {
-      const convParticipant = participants?.find(
+      // Find the other participant for this specific conversation.
+      const otherParticipant = participants?.find(
         (p: any) => p.conversation_id === d.conversation_id,
-      )
-      const profile = (convParticipant as any)?.profiles
+      ) as any
+
+      const profile = otherParticipant?.profiles
       const otherProfile = Array.isArray(profile) ? profile[0] : profile
 
       return {
@@ -101,7 +110,10 @@ export default function ChatListSidebar() {
         created_at: (d.conversations as any).created_at,
         last_message_at: (d.conversations as any).last_message_at,
         participants: otherProfile ? [otherProfile] : [],
-        last_message: latestMessages[d.conversation_id] || null,
+        // Don't include last_message here — we no longer bulk-fetch all
+        // messages.  The timestamp from last_message_at is sufficient for
+        // the sidebar display.
+        last_message: null,
       }
     })
 
@@ -123,7 +135,7 @@ export default function ChatListSidebar() {
         <MessageSquare className="h-10 w-10 text-muted-foreground mb-3" />
         <p className="text-sm text-muted-foreground">No conversations yet</p>
         <p className="text-xs text-muted-foreground mt-1">
-          Invite a friend to start chatting
+          Add a friend to start chatting
         </p>
       </div>
     )
@@ -165,10 +177,9 @@ export default function ChatListSidebar() {
                     </span>
                   )}
                 </div>
+                {/* Never show raw encrypted_content — only a generic preview. */}
                 <p className="text-xs text-muted-foreground truncate mt-0.5">
-                  {conv.last_message
-                    ? conv.last_message.encrypted_content
-                    : "No messages yet"}
+                  {conv.last_message_at ? "🔒 Encrypted message" : "No messages yet"}
                 </p>
               </div>
             </button>

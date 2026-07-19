@@ -20,9 +20,37 @@ export function useRealtimeSubscription({
   onDelete,
 }: UseRealtimeOptions) {
   const channelRef = useRef<RealtimeChannel | null>(null)
-  const supabase = getSupabaseClient()
+
+  /**
+   * Store the latest callbacks in refs so the subscription effect closure
+   * always calls the most recent version — avoids the stale-closure bug
+   * that would occur if we re-subscribed on every callback change.
+   */
+  const onInsertRef = useRef(onInsert)
+  const onUpdateRef = useRef(onUpdate)
+  const onDeleteRef = useRef(onDelete)
 
   useEffect(() => {
+    onInsertRef.current = onInsert
+  }, [onInsert])
+
+  useEffect(() => {
+    onUpdateRef.current = onUpdate
+  }, [onUpdate])
+
+  useEffect(() => {
+    onDeleteRef.current = onDelete
+  }, [onDelete])
+
+  /**
+   * Keep a stable Supabase client reference so we don't create a new
+   * singleton on every render.
+   */
+  const supabaseRef = useRef(getSupabaseClient())
+
+  useEffect(() => {
+    const supabase = supabaseRef.current
+
     const channelConfig: any = {
       event: "*",
       schema: "public",
@@ -35,13 +63,13 @@ export function useRealtimeSubscription({
     const channel = supabase
       .channel(`${table}-${filter || "all"}`)
       .on("postgres_changes", { ...channelConfig, event: "INSERT" }, (payload) => {
-        onInsert?.(payload)
+        onInsertRef.current?.(payload)
       })
       .on("postgres_changes", { ...channelConfig, event: "UPDATE" }, (payload) => {
-        onUpdate?.(payload)
+        onUpdateRef.current?.(payload)
       })
       .on("postgres_changes", { ...channelConfig, event: "DELETE" }, (payload) => {
-        onDelete?.(payload)
+        onDeleteRef.current?.(payload)
       })
       .subscribe()
 
@@ -50,7 +78,7 @@ export function useRealtimeSubscription({
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [table, filter])
+  }, [table, filter]) // Only re-subscribe if table/filter change, not callbacks
 
   return channelRef
 }

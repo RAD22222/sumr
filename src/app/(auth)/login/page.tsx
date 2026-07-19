@@ -4,9 +4,9 @@ import LoginForm from "@/components/auth/LoginForm"
 
 export default async function LoginPage() {
   const supabase = await createServerSupabaseClient()
-  const { data: { session } } = await supabase.auth.getSession()
+  const { data: { user } } = await supabase.auth.getUser()
 
-  if (session) {
+  if (user) {
     redirect("/chats")
   }
 

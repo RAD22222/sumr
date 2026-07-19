@@ -1,5 +1,3 @@
-export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
-
 export interface ReplyTo {
   id: string
   content: string
@@ -38,10 +36,12 @@ export interface Message {
   conversation_id: string
   sender_id: string
   encrypted_content: string
+  /** AES-GCM IV — must only contain the raw nonce bytes (base64). */
   nonce: string
-  created_at: string
+  /** FK to the message being replied to. Replaces the old "reply:id" nonce hack. */
   reply_to_id?: string | null
   reactions?: Record<string, string[]>
+  created_at: string
   sender?: Profile
   decrypted_content?: string
   status?: "sending" | "sent" | "delivered" | "read"

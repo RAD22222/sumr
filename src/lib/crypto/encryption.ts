@@ -25,8 +25,13 @@ export class E2EEManager {
   private rsaPrivateKey: CryptoKey | null = null
   private rsaPublicKey: CryptoKey | null = null
 
-  async initialize(password: string): Promise<void> {
-    this.masterKey = await deriveEncryptionKey(password)
+  /**
+   * Derive the master key from the user's password and their userId.
+   * The userId is used to derive a per-user PBKDF2 salt so every user
+   * has a unique key even if they share the same password.
+   */
+  async initialize(password: string, userId: string): Promise<void> {
+    this.masterKey = await deriveEncryptionKey(password, userId)
   }
 
   isInitialized(): boolean {
